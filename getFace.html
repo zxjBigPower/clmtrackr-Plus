@@ -1,0 +1,270 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <title>Face tracker</title>
+    <meta charset="utf-8">
+    <style>
+        body {
+            font-family: 'Lato';
+            background-color: #f0f0f0;
+            margin: 0px auto;
+            max-width: 1150px;
+        }
+
+        #overlay {
+            position: absolute;
+            top: 0px;
+            left: 0px;
+            -o-transform: scaleX(-1);
+            -webkit-transform: scaleX(-1);
+            transform: scaleX(-1);
+            -ms-filter: fliph; /*IE*/
+            filter: fliph; /*IE*/
+        }
+
+        #videoel {
+            -o-transform: scaleX(-1);
+            -webkit-transform: scaleX(-1);
+            transform: scaleX(-1);
+            -ms-filter: fliph; /*IE*/
+            filter: fliph; /*IE*/
+            margin: 0 auto;
+        }
+
+        #container {
+            position: relative;
+            width: 705px;
+            height: 436px;
+            /*margin : 0px auto;*/
+        }
+
+        #content {
+            margin-top: 70px;
+            margin-left: 100px;
+            margin-right: 100px;
+            max-width: 950px;
+        }
+
+        h2 {
+            font-weight: 400;
+        }
+
+        .nogum {
+            display: none;
+        }
+
+        .hide {
+            display: none;
+        }
+
+        .nohide {
+            display: block;
+        }
+        #canvas1{
+            position: absolute;
+            top: 0;
+            left: 0;
+        }
+    </style>
+    <script>
+        // getUserMedia only works over https in Chrome 47+, so we redirect to https. Also notify user if running from file.
+        if (window.location.protocol == "file:") {
+            alert("You seem to be running this example directly from a file. Note that these examples only work when served from a server or localhost due to canvas cross-domain restrictions.");
+        } else if (window.location.hostname !== "localhost" && window.location.protocol !== "https:") {
+            window.location.protocol = "https";
+        }
+    </script>
+    <script type="text/javascript">
+
+        var _gaq = _gaq || [];
+        _gaq.push(['_setAccount', 'UA-32642923-1']);
+        _gaq.push(['_trackPageview']);
+
+        (function () {
+            var ga = document.createElement('script');
+            ga.type = 'text/javascript';
+            ga.async = true;
+            ga.src = ('https:' == document.location.protocol ? 'https://ssl' : 'http://www') + '.google-analytics.com/ga.js';
+            var s = document.getElementsByTagName('script')[0];
+            s.parentNode.insertBefore(ga, s);
+        })();
+
+    </script>
+</head>
+<body>
+<script src="./js/utils.js"></script>
+<script src="./js/clmtrackr.min.js"></script>
+<div id="content">
+    <div id="container">
+        <video id="videoel" width="581" height="436" preload="auto" loop playsinline autoplay>
+        </video>
+        <canvas id="overlay" width="581" height="436"></canvas>
+        <canvas id="canvas1" width="581" height="436"></canvas>
+    </div>
+</div>
+<input type="button" onclick="getPhoto()" value="拍照"/>
+<canvas id="shortCut" width="180" height="180"></canvas>
+<button id="keepImg">保存图片</button>
+<div id="img"></div>
+<!--<p id="positions"></p>-->
+<script>
+    var vid = document.getElementById('videoel');
+    var vid_width = vid.width;
+    var vid_height = vid.height;
+    var overlay = document.getElementById('overlay');
+    var overlayCC = overlay.getContext('2d');
+
+    /*********** Setup of video/webcam and checking for webGL support *********/
+    var insertAltVideo = function (video) {
+        // insert alternate video if getUserMedia not available
+        if (supports_video()) {
+            if (supports_webm_video()) {
+                video.src = "./media/cap12_edit.webm";
+            } else if (supports_h264_baseline_video()) {
+                video.src = "./media/cap12_edit.mp4";
+            } else {
+                return false;
+            }
+            return true;
+        } else return false;
+    }
+    function adjustVideoProportions() {
+        // resize overlay and video if proportions of video are not 4:3
+        // keep same height, just change width
+        var proportion = vid.videoWidth / vid.videoHeight;
+        vid_width = Math.round(vid_height * proportion);
+        vid.width = vid_width;
+        overlay.width = vid_width;
+    }
+    function gumSuccess(stream) {
+        // add camera stream if getUserMedia succeeded
+        if ("srcObject" in vid) {
+            vid.srcObject = stream;
+        } else {
+            vid.src = (window.URL && window.URL.createObjectURL(stream));
+        }
+        vid.onloadedmetadata = function () {
+            adjustVideoProportions();
+            vid.play();
+        }
+        vid.onresize = function () {
+            adjustVideoProportions();
+            if (trackingStarted) {
+                ctrack.stop();
+                ctrack.reset();
+                ctrack.start(vid);
+            }
+        }
+    }
+    function gumFail() {
+        // fall back to video if getUserMedia failed
+        insertAltVideo(vid);
+        document.getElementById('gum').className = "hide";
+        document.getElementById('nogum').className = "nohide";
+        alert("There was some problem trying to fetch video from your webcam, using a fallback video instead.");
+    }
+    navigator.getUserMedia = navigator.getUserMedia || navigator.webkitGetUserMedia || navigator.mozGetUserMedia || navigator.msGetUserMedia;
+    window.URL = window.URL || window.webkitURL || window.msURL || window.mozURL;
+    // set up video
+    if (navigator.mediaDevices) {
+        navigator.mediaDevices.getUserMedia({video: true}).then(gumSuccess).catch(gumFail);
+    } else if (navigator.getUserMedia) {
+        navigator.getUserMedia({video: true}, gumSuccess, gumFail);
+    } else {
+        insertAltVideo(vid);
+        document.getElementById('gum').className = "hide";
+        document.getElementById('nogum').className = "nohide";
+        alert("Your browser does not seem to support getUserMedia, using a fallback video instead.");
+    }
+
+    /*********** Code for face tracking *********/
+
+    var ctrack = new clm.tracker();
+    ctrack.init();
+    var trackingStarted = false;
+
+    function startVideo() {
+        // start video
+        vid.play();
+        // start tracking
+        ctrack.start(vid);
+        trackingStarted = true;
+        // start loop to draw face
+        drawLoop();
+    }
+    startVideo();
+    function drawLoop() {
+        requestAnimFrame(drawLoop);
+        overlayCC.clearRect(0, 0, vid_width, vid_height);
+        //psrElement.innerHTML = "score :" + ctrack.getScore().toFixed(4);
+        if (ctrack.getCurrentPosition()) {
+            ctrack.draw(overlay);
+        }
+    }
+
+    var videoInput = document.getElementById('videoel');
+
+    var ctracker = new clm.tracker();
+    ctracker.init();
+    ctracker.start(videoInput);
+
+    function positionLoop() {
+       // requestAnimFrame(positionLoop);
+        var positions = ctracker.getCurrentPosition();
+        // do something with the positions ...
+        // print the positions
+        var positionString = "";
+       /* if (positions) {
+            for (var p = 0; p < 10; p++) {
+                positionString += "featurepoint " + p + " : [" + positions[p][0].toFixed(2) + "," + positions[p][1].toFixed(2) + "]<br/>";
+            }
+            document.getElementById('positions').innerHTML = positionString;
+        }*/
+        if (positions) {
+            //console.log(positions[1],positions[13]);
+            var posl=Math.round(positions[1][0]-0);
+            var posr=Math.round(positions[13][0]-0);
+            var post=Math.round(positions[21][1]-0);
+            var posb=Math.round(positions[7][1]-0);
+            //console.log(posl,posr,post,posb);
+            if(posl>210&&posr<370&&post>120&&posb<300){
+                getPhoto();
+            }
+        }
+    }
+   setInterval(function () {
+       positionLoop();
+   },1000)
+    /*拍照*/
+    var canvas1 = document.getElementById('canvas1');
+    var context1 = canvas1.getContext('2d');
+    var can = document.getElementById('shortCut');
+    var context2 = can.getContext('2d');
+    context1.strokeStyle = "#69fff1";
+    context1.moveTo(210,138);
+    context1.lineTo(370,138);
+    context1.lineTo(370,298);
+    context1.lineTo(210,298);
+    context1.lineTo(210,138);
+    context1.stroke();
+    function getPhoto() {
+        context2.drawImage(vid, 230,148,180,180,0,0,180,180); //将video对象内指定的区域捕捉绘制到画布上指定的区域，实现拍照。
+    }
+    var img=document.getElementById("img")
+    //将canvas转化为图片
+    function convertCanvasToImage(canvas) {
+        var image = new Image();
+        image.src = canvas.toDataURL("image/png");
+        return image;
+    }
+  var keepImg=document.getElementById("keepImg");
+    keepImg.onclick= function () {
+
+        var photoImg=document.createElement("img");
+        photoImg.src=convertCanvasToImage(can).src;
+        img.appendChild(photoImg);
+        console.log(convertCanvasToImage(can).src);
+    }
+</script>
+</body>
+</html>
